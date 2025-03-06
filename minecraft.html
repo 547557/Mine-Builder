@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft 建模工具</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { width: 100vw; height: 80vh; display: block; }
+        #controls { display: flex; align-items: center; position: absolute; top: 10px; left: 10px; background: rgba(0, 0, 0, 0.7); padding: 10px; color: white; }
+        #status { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0, 0, 0, 0.5); padding: 5px; max-width: 80%; word-wrap: break-word; }
+        #toolbar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 20vh;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        .toolbar-slot {
+            width: 40px;
+            height: 40px;
+            margin: 0 5px;
+            background: #333;
+            border: 2px solid #fff;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        .toolbar-slot img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .toolbar-slot.selected { border-color: #ff0; }
+        #ellipsis-slot {
+            width: 40px;
+            height: 40px;
+            margin: 0 5px;
+            background: #333;
+            border: 2px solid #fff;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            color: #fff;
+        }
+        #backpack-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.8);
+            justify-content: center;
+            align-items: center;
+        }
+        #backpack-content {
+            background: #444;
+            padding: 20px;
+            border-radius: 10px;
+            display: grid;
+            grid-template-columns: repeat(6, 40px);
+            gap: 10px;
+        }
+        .backpack-slot {
+            width: 40px;
+            height: 40px;
+            background: #333;
+            border: 2px solid #fff;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        .backpack-slot img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="controls">
+            <input type="file" id="fileInput" accept=".zip" style="margin-right: 10px;">
+            <input type="file" id="voxelTxtInput" accept=".txt" style="margin-right: 10px;">
+            <input type="file" id="customBlockInput" accept=".png" style="margin-right: 10px;">
+            <input type="text" id="customBlockName" placeholder="自定义方块名称" style="margin-right: 10px;">
+            <button onclick="addCustomBlock()">添加自定义方块</button>
+            <button onclick="toggleEditMode()">切换编辑模式</button>
+            <button onclick="deleteSelectedBlock()">删除选中方块</button>
+            <button onclick="activateMagicWand()">魔棒工具</button>
+            <button onclick="loadFromServer()">从服务器加载</button>
+            <button onclick="saveToServer()">保存到服务器</button>
+        </div>
+        
+        <script>
+        // 初始化 Three.js
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('canvas') });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x87ceeb);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        camera.position.z = 5;
+
+        // 光源设置
+        const ambientLight = new THREE.AmbientLight(0xffff99, 0.5);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(10, 10, 10);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.camera.left = -10;
+        directionalLight.shadow.camera.right = 10;
+        directionalLight.shadow.camera.top = 10;
+        directionalLight.shadow.camera.bottom = -10;
+        directionalLight.shadow.camera.near = 0.5;
+        directionalLight.shadow.camera.far = 50;
+        directionalLight.shadow.mapSize.width = 1024;
+        directionalLight.shadow.mapSize.height = 1024;
+        scene.add(directionalLight);
+
+        // 地面
+        const groundGeometry = new THREE.PlaneGeometry(100, 100);
+        const groundMaterial = new THREE.MeshLambertMaterial({ color: 0xaaaaaa });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = -0.5;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        const gridHelper = new THREE.GridHelper(10, 10);
+        scene.add(gridHelper);
+
+        // 全局变量
+        let currentMesh = null;
+        let selectedBlockName = null;
+        let placedBlocks = [];
+        let editMode = true;
+        let selectedBlock = null;
+        let magicWandActive = false;
+        let selectedBlocks = [];
+        let textures = {};
+
+        // DOM 元素
+        const status = document.getElementById('status');
+        const toolbar = document.getElementById('toolbar');
+        const backpackModal = document.getElementById('backpack-modal');
+        const backpackContent = document.getElementById('backpack-content');
+        const canvas = document.getElementById('canvas');
+
+        // blockIds 字典（更新后的版本）
+        const blockIds = {
+            "0": "air",
+            "1": "stone",
+            "2": "grass_block",
+            "3": "dirt",
+            "4": "cobblestone",
+            "5": "oak_planks",
+            "6": "oak_sapling",
+            "7": "bedrock",
+            "8": "flowing_water",
+            "9": "water",
+            "17": "oak_log",
+            "18": "oak_leaves",
+            "19": "sponge",
+            "20": "glass",
+            "22": "lapis_block",
+            "23": "dispenser",
+            "24": "sandstone",
+            "25": "note_block",
+            "26": "bed",
+            "27": "powered_rail",
+            "28": "detector_rail",
+            "29": "sticky_piston",
+            "30": "cobweb",
+            "31": "tall_grass",
+            "32": "dead_bush",
+            "33": "piston",
+            "34": "piston_head",
+            "35": "white_wool",
+            "36": "piston_extension",
+            "37": "dandelion",
+            "38": "poppy",
+            "39": "brown_mushroom",
+            "40": "red_mushroom",
+            "41": "gold_block",
+            "42": "iron_block",
+            "43": "smooth_stone_slab_double",
+            "44": "smooth_stone_slab",
+            "45": "bricks",
+            "46": "tnt",
+            "47": "bookshelf",
+            "48": "mossy_cobblestone",
+            "49": "obsidian",
+            "50": "torch",
+            "51": "fire",
+            "52": "spawner",
+            "53": "oak_stairs",
+            "54": "chest",
+            "55": "redstone_dust",
+            "57": "diamond_block",
+            "58": "crafting_table",
+            "59": "wheat",
+            "60": "farmland",
+            "61": "furnace",
+            "62": "furnace_on",
+            "63": "standing_sign",
+            "64": "oak_door",
+            "65": "ladder",
+            "66": "rail",
+            "67": "cobblestone_stairs",
+            "68": "wall_sign",
+            "69": "lever",
+            "70": "stone_pressure_plate",
+            "71": "iron_door",
+            "72": "oak_pressure_plate",
+            "75": "redstone_torch_off",
+            "76": "redstone_torch",
+            "77": "stone_button",
+            "78": "snow_layer",
+            "79": "ice",
+            "80": "snow",
+            "81": "cactus",
+            "82": "clay",
+            "83": "sugar_cane",
+            "84": "jukebox",
+            "85": "oak_fence",
+            "86": "pumpkin",
+            "87": "netherrack",
+            "88": "soul_sand",
+            "89": "glowstone",
+            "90": "nether_portal",
+            "91": "jack_o_lantern",
+            "92": "cake",
+            "93": "repeater_off",
+            "94": "repeater_on",
+            "95": "white_stained_glass",
+            "96": "oak_trapdoor",
+            "97": "silverfish_stone",
+            "98": "stone_bricks",
+            "99": "brown_mushroom_block",
+            "100": "red_mushroom_block",
+            "101": "iron_bars",
+            "102": "glass_pane",
+            "103": "melon",
+            "104": "pumpkin_stem",
+            "105": "melon_stem",
+            "106": "vine",
+            "107": "oak_fence_gate",
+            "108": "brick_stairs",
+            "109": "stone_brick_stairs",
+            "110": "mycelium",
+            "111": "lily_pad",
+            "112": "nether_bricks",
+            "113": "nether_brick_fence",
+            "114": "nether_brick_stairs",
+            "115": "nether_wart",
+            "116": "enchanting_table",
+            "117": "brewing_stand",
+            "118": "cauldron",
+            "119": "end_portal",
+            "120": "end_portal_frame",
+            "121": "end_stone",
+            "122": "dragon_egg",
+            "123": "redstone_lamp_off",
+            "124": "redstone_lamp_on",
+            "125": "oak_slab_double",
+            "126": "oak_slab",
+            "127": "cocoa",
+            "128": "sandstone_stairs",
+            "130": "ender_chest",
+            "131": "tripwire_hook",
+            "132": "tripwire",
+            "133": "emerald_block",
+            "134": "spruce_stairs",
+            "135": "birch_stairs",
+            "136": "jungle_stairs",
+            "137": "command_block",
+            "138": "beacon",
+            "139": "cobblestone_wall",
+            "140": "flower_pot",
+            "141": "carrots",
+            "142": "potatoes",
+            "143": "oak_button",
+            "144": "skull",
+            "145": "anvil",
+            "146": "trapped_chest",
+            "147": "light_weighted_pressure_plate",
+            "148": "heavy_weighted_pressure_plate",
+            "149": "comparator_off",
+            "150": "comparator_on",
+            "151": "daylight_detector",
+            "152": "redstone_block",
+            "154": "hopper",
+            "155": "quartz_block",
+            "156": "quartz_stairs",
+            "157": "activator_rail",
+            "158": "dropper",
+            "159": "white_terracotta",
+            "160": "white_stained_glass_pane",
+            "161": "acacia_leaves",
+            "162": "acacia_log",
+            "163": "acacia_stairs",
+            "164": "dark_oak_stairs",
+            "165": "slime_block",
+            "166": "barrier",
+            "167": "iron_trapdoor",
+            "168": "prismarine",
+            "169": "sea_lantern",
+            "170": "hay_block",
+            "171": "white_carpet",
+            "172": "terracotta",
+            "173": "coal_block",
+            "174": "packed_ice",
+            "175": "sunflower",
+            "176": "white_banner_standing",
+            "177": "white_banner_wall",
+            "178": "daylight_detector_inverted",
+            "179": "red_sandstone",
+            "180": "red_sandstone_stairs",
+            "181": "red_sandstone_slab_double",
+            "182": "red_sandstone_slab",
+            "183": "spruce_fence_gate",
+            "184": "birch_fence_gate",
+            "185": "jungle_fence_gate",
+            "186": "dark_oak_fence_gate",
+            "187": "acacia_fence_gate",
+            "188": "spruce_fence",
+            "189": "birch_fence",
+            "190": "jungle_fence",
+            "191": "dark_oak_fence",
+            "192": "acacia_fence",
+            "193": "spruce_door",
+            "194": "birch_door",
+            "195": "jungle_door",
+            "196": "acacia_door",
+            "197": "dark_oak_door",
+            "198": "end_rod",
+            "199": "chorus_plant",
+            "200": "chorus_flower",
+            "201": "purpur_block",
+            "202": "purpur_pillar",
+            "203": "purpur_stairs",
+            "204": "purpur_slab_double",
+            "205": "purpur_slab",
+            "206": "end_stone_bricks",
+            "207": "beetroots",
+            "208": "grass_path",
+            "212": "frosted_ice",
+            "213": "magma_block",
+            "214": "nether_wart_block",
+            "215": "red_nether_bricks",
+            "216": "bone_block",
+            "235": "white_glazed_terracotta",
+            "236": "orange_glazed_terracotta",
+            "237": "magenta_glazed_terracotta",
+            "238": "light_blue_glazed_terracotta",
+            "239": "yellow_glazed_terracotta",
+            "240": "lime_glazed_terracotta",
+            "241": "pink_glazed_terracotta",
+            "242": "gray_glazed_terracotta",
+            "243": "light_gray_glazed_terracotta",
+            "244": "cyan_glazed_terracotta",
+            "245": "purple_glazed_terracotta",
+            "246": "blue_glazed_terracotta",
+            "247": "brown_glazed_terracotta",
+            "248": "green_glazed_terracotta",
+            "249": "red_glazed_terracotta",
+            "250": "black_glazed_terracotta",
+            "251": "white_concrete",
+            "251:1": "orange_concrete",
+            "251:2": "magenta_concrete",
+            "251:3": "light_blue_concrete",
+            "251:4": "yellow_concrete",
+            "251:5": "lime_concrete",
+            "251:6": "pink_concrete",
+            "251:7": "gray_concrete",
+            "251:8": "light_gray_concrete",
+            "251:9": "cyan_concrete",
+            "251:10": "purple_concrete",
+            "251:11": "blue_concrete",
+            "251:12": "brown_concrete",
+            "251:13": "green_concrete",
+            "251:14": "red_concrete",
+            "251:15": "black_concrete",
+            "252": "white_concrete_powder",
+            "253": "structure_block"
+        };
+
+        // 优化纹理映射
+        function mapTextureToBlockId(textureName) {
+            const baseName = textureName.replace(/_(top|bottom|side|overlay|on|off|inner|outer|stage\d+|front|back|lit|saw)/, '').toLowerCase();
+            const specialMappings = {
+                'grass_block_top': 'grass_block', 'grass_block_side': 'grass_block', 'grass_block': 'grass_block', 'dirt': 'grass_block',
+                'acacia_planks': 'oak_planks', 'birch_planks': 'oak_planks', 'jungle_planks': 'oak_planks', 'spruce_planks': 'oak_planks', 'dark_oak_planks': 'oak_planks',
+                'acacia_log': 'oak_log', 'birch_log': 'oak_log', 'jungle_log': 'oak_log', 'spruce_log': 'oak_log', 'dark_oak_log': 'oak_log', 'oak_log': 'oak_log',
+                'acacia_leaves': 'oak_leaves', 'birch_leaves': 'oak_leaves', 'jungle_leaves': 'oak_leaves', 'spruce_leaves': 'oak_leaves', 'dark_oak_leaves': 'oak_leaves', 'oak_leaves': 'oak_leaves',
+                'acacia_sapling': 'oak_sapling', 'birch_sapling': 'oak_sapling', 'jungle_sapling': 'oak_sapling', 'spruce_sapling': 'oak_sapling', 'dark_oak_sapling': 'oak_sapling', 'oak_sapling': 'oak_sapling',
+                'acacia_door': 'acacia_door', 'birch_door': 'birch_door', 'jungle_door': 'jungle_door', 'spruce_door': 'spruce_door', 'dark_oak_door': 'dark_oak_door', 'oak_door': 'oak_door',
+                'redstone_lamp_on': 'redstone_lamp_on', 'furnace_front_on': 'furnace_on', 'repeater_on': 'repeater_on', 'comparator_on': 'comparator_on',
+                'bone_block_side': 'bone_block', 'bone_block_top': 'bone_block', 'nether_bricks': 'nether_bricks', 'red_nether_bricks': 'red_nether_bricks',
+                'beetroots_stage0': 'beetroots', 'beetroots_stage1': 'beetroots', 'beetroots_stage2': 'beetroots', 'beetroots_stage3': 'beetroots',
+                'carrots_stage0': 'carrots', 'carrots_stage1': 'carrots', 'carrots_stage2': 'carrots', 'carrots_stage3': 'carrots',
+                'potatoes_stage0': 'potatoes', 'potatoes_stage1': 'potatoes', 'potatoes_stage2': 'potatoes', 'potatoes_stage3': 'potatoes',
+                'wheat_stage0': 'wheat', 'wheat_stage1': 'wheat', 'wheat_stage2': 'wheat', 'wheat_stage3': 'wheat', 'wheat_stage4': 'wheat', 'wheat_stage5': 'wheat', 'wheat_stage6': 'wheat', 'wheat_stage7': 'wheat',
+                'nether_wart_stage0': 'nether_wart', 'nether_wart_stage1': 'nether_wart', 'nether_wart_stage2': 'nether_wart',
+                'cocoa_stage0': 'cocoa', 'cocoa_stage1': 'cocoa', 'cocoa_stage2': 'cocoa',
+                'melon_side': 'melon', 'melon_top': 'melon', 'pumpkin_side': 'pumpkin', 'jack_o_lantern': 'jack_o_lantern',
+                'end_stone_bricks': 'end_stone_bricks', 'grass_path_top': 'grass_path', 'bricks': 'bricks'
+            };
+            if (specialMappings[baseName]) return specialMappings[baseName];
+            for (let id in blockIds) {
+                const blockName = blockIds[id];
+                if (baseName === blockName || baseName.startsWith(blockName) || blockName.startsWith(baseName)) {
+                    return blockName;
+                }
+            }
+            return null;
+        }
+
+        // 创建草方块
+        function createGrassBlock(topTexture, sideTexture, bottomTexture) {
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const materials = [
+                new THREE.MeshLambertMaterial({ map: sideTexture || null }),
+                new THREE.MeshLambertMaterial({ map: sideTexture || null }),
+                new THREE.MeshLambertMaterial({ map: topTexture || null }),
+                new THREE.MeshLambertMaterial({ map: bottomTexture || null }),
+                new THREE.MeshLambertMaterial({ map: sideTexture || null }),
+                new THREE.MeshLambertMaterial({ map: sideTexture || null })
+            ];
+            const mesh = new THREE.Mesh(geometry, materials);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            return mesh;
+        }
+
+        // 创建通用方块
+        function createBlock(texture) {
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const material = new THREE.MeshLambertMaterial({ map: texture || null });
+            const materials = [material, material, material, material, material, material];
+            const mesh = new THREE.Mesh(geometry, materials);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            return mesh;
+        }
+
+        // 处理材质包
+        function processTexturePack(zipData) {
+            const zip = new JSZip();
+            zip.loadAsync(zipData).then(function(zip) {
+                const basePath = "TexturePack-master/assets/minecraft/textures/block/";
+                const textureFiles = Object.keys(zip.files).filter(file => 
+                    file.toLowerCase().startsWith(basePath.toLowerCase()) && file.toLowerCase().endsWith('.png'));
+
+                if (textureFiles.length === 0) {
+                    status.innerText = '材质包中未找到方块纹理，请检查文件路径。';
+                    return;
+                }
+
+                const unrecognizedTextures = [];
+                const texturePromises = textureFiles.map(file => {
+                    return zip.file(file).async("blob").then(blob => {
+                        const url = URL.createObjectURL(blob);
+                        const textureName = file.replace(basePath, '').replace('.png', '').toLowerCase();
+                        const blockId = mapTextureToBlockId(textureName);
+                        if (blockId) {
+                            textures[blockId] = textures[blockId] || url;
+                            textures[textureName] = url;
+                            return { name: blockId, url };
+                        } else {
+                            unrecognizedTextures.push(textureName);
+                            return null;
+                        }
+                    });
+                });
+
+                Promise.all(texturePromises).then(texturesData => {
+                    const validTextures = texturesData.filter(data => data);
+                    if (unrecognizedTextures.length > 0) {
+                        status.innerText = `加载了 ${validTextures.length} 个有效纹理，${unrecognizedTextures.length} 个未识别纹理: ${unrecognizedTextures.join(', ')}`;
+                    } else {
+                        status.innerText = `加载了 ${validTextures.length} 个有效纹理: ${Object.keys(textures).join(', ')}`;
+                    }
+                    updateToolbar(validTextures.slice(0, 6));
+                    if (validTextures.length > 6) addEllipsisButton();
+                    if (textures['grass_block_top'] || textures['grass_block']) loadBlockModel('grass_block');
+                }).catch(error => {
+                    status.innerText = `加载纹理失败: ${error.message}`;
+                    console.error(error);
+                });
+            });
+        }
+
+        // 更新物品栏
+        function updateToolbar(textureData) {
+            textureData.forEach(data => {
+                if (data.name && !toolbar.querySelector(`[data-name="${data.name}"]`)) {
+                    const slot = document.createElement('div');
+                    slot.className = 'toolbar-slot';
+                    slot.dataset.name = data.name;
+                    const img = document.createElement('img');
+                    img.src = data.url;
+                    slot.appendChild(img);
+                    slot.addEventListener('click', () => {
+                        document.querySelectorAll('.toolbar-slot').forEach(s => s.classList.remove('selected'));
+                        slot.classList.add('selected');
+                        selectedBlockName = data.name;
+                        loadBlockModel(data.name);
+                    });
+                    toolbar.appendChild(slot);
+                }
+            });
+        }
+
+        // 添加省略号按钮
+        function addEllipsisButton() {
+            const ellipsisSlot = document.createElement('div');
+            ellipsisSlot.id = 'ellipsis-slot';
+            ellipsisSlot.innerHTML = '...';
+            ellipsisSlot.addEventListener('click', openBackpack);
+            toolbar.appendChild(ellipsisSlot);
+        }
+
+        // 打开背包
+        function openBackpack() {
+            backpackContent.innerHTML = '';
+            Object.entries(textures).forEach(([textureName, url]) => {
+                if (textureName) {
+                    const blockName = mapTextureToBlockId(textureName) || textureName;
+                    const slot = document.createElement('div');
+                    slot.className = 'backpack-slot';
+                    const img = document.createElement('img');
+                    img.src = url;
+                    slot.appendChild(img);
+                    slot.addEventListener('click', () => {
+                        selectedBlockName = blockName;
+                        loadBlockModel(blockName);
+                        document.querySelectorAll('.toolbar-slot').forEach(s => s.classList.remove('selected'));
+                        const toolbarSlot = toolbar.querySelector(`[data-name="${blockName}"]`);
+                        if (toolbarSlot) toolbarSlot.classList.add('selected');
+                        closeBackpack();
+                    });
+                    backpackContent.appendChild(slot);
+                }
+            });
+            backpackModal.style.display = 'flex';
+        }
+
+        // 关闭背包
+        function closeBackpack() {
+            backpackModal.style.display = 'none';
+        }
+
+        // 加载方块模型
+        function loadBlockModel(blockName) {
+            if (currentMesh) scene.remove(currentMesh);
+            const textureLoader = new THREE.TextureLoader();
+            let mesh;
+            if (blockName === 'grass_block') {
+                const topTexture = textureLoader.load(textures['grass_block_top'] || textures['grass_block'] || Object.values(textures)[0]);
+                const sideTexture = textureLoader.load(textures['grass_block_side'] || textures['grass_block'] || Object.values(textures)[0]);
+                const bottomTexture = textureLoader.load(textures['dirt'] || Object.values(textures)[0]);
+                mesh = createGrassBlock(topTexture, sideTexture, bottomTexture);
+            } else {
+                const textureUrl = textures[blockName] || Object.values(textures)[0];
+                if (!textureUrl) {
+                    console.error(`未找到纹理: ${blockName}`);
+                    status.innerText = `错误: 未找到纹理 ${blockName}`;
+                    return;
+                }
+                const texture = textureLoader.load(textureUrl);
+                mesh = createBlock(texture);
+            }
+            if (mesh) {
+                currentMesh = mesh;
+                scene.add(currentMesh);
+                status.innerText = `加载方块: ${blockName}`;
+            } else {
+                status.innerText = `加载失败: ${blockName}`;
+            }
+            controls.update();
+        }
+
+        // 放置方块
+        function placeBlock(event) {
+            if (!editMode || !selectedBlockName) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+            const intersects = raycaster.intersectObjects(placedBlocks);
+            const textureLoader = new THREE.TextureLoader();
+            let block;
+            if (selectedBlockName === 'grass_block') {
+                const topTexture = textureLoader.load(textures['grass_block_top'] || textures['grass_block'] || Object.values(textures)[0]);
+                const sideTexture = textureLoader.load(textures['grass_block_side'] || textures['grass_block'] || Object.values(textures)[0]);
+                const bottomTexture = textureLoader.load(textures['dirt'] || Object.values(textures)[0]);
+                block = createGrassBlock(topTexture, sideTexture, bottomTexture);
+            } else {
+                const texture = textureLoader.load(textures[selectedBlockName] || Object.values(textures)[0]);
+                block = createBlock(texture);
+            }
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+                block.position.copy(intersect.point).add(intersect.face.normal).floor().addScalar(0.5);
+            } else {
+                block.position.set(Math.round(x * 5), Math.round(y * 5), 0);
+            }
+            block.userData = { name: selectedBlockName }; // 添加方块名称
+            scene.add(block);
+            placedBlocks.push(block);
+        }
+
+        // 添加自定义方块
+        function addCustomBlock() {
+            const file = document.getElementById('customBlockInput').files[0];
+            const name = document.getElementById('customBlockName').value;
+            if (file && name) {
+                const url = URL.createObjectURL(file);
+                textures[name] = url;
+                updateToolbar([{ name, url }]);
+                status.innerText = `已添加自定义方块: ${name}`;
+            }
+        }
+
+        // 切换编辑模式
+        function toggleEditMode() {
+            editMode = !editMode;
+            status.innerText = editMode ? '进入编辑模式（点击添加或选中方块）' : '退出编辑模式';
+            if (editMode && currentMesh) scene.remove(currentMesh);
+        }
+
+        // 选中方块
+        function selectBlock(event) {
+            const rect = canvas.getBoundingClientRect();
+            const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+            const intersects = raycaster.intersectObjects(placedBlocks);
+
+            if (selectedBlock) {
+                scene.remove(selectedBlock.outline);
+                selectedBlock = null;
+            }
+            selectedBlocks.forEach(block => scene.remove(block.outline));
+            selectedBlocks = [];
+
+            if (intersects.length > 0) {
+                const clickedBlock = intersects[0].object;
+                if (magicWandActive) {
+                    selectConnectedBlocks(clickedBlock);
+                    status.innerText = `选中了 ${selectedBlocks.length} 个相连方块`;
+                } else {
+                    selectedBlock = clickedBlock;
+                    const outlineGeometry = new THREE.BoxGeometry(1.05, 1.05, 1.05);
+                    const outlineMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00, wireframe: true });
+                    const outline = new THREE.Mesh(outlineGeometry, outlineMaterial);
+                    outline.position.copy(selectedBlock.position);
+                    scene.add(outline);
+                    selectedBlock.outline = outline;
+                    status.innerText = `选中方块: (${selectedBlock.position.x}, ${selectedBlock.position.y}, ${selectedBlock.position.z})`;
+                }
+            } else if (editMode) {
+                placeBlock(event);
+            }
+        }
+
+        // 删除选中方块
+        function deleteSelectedBlock() {
+            if (selectedBlock) {
+                scene.remove(selectedBlock.outline);
+                scene.remove(selectedBlock);
+                placedBlocks = placedBlocks.filter(block => block !== selectedBlock);
+                status.innerText = '已删除选中方块';
+                selectedBlock = null;
+            } else if (selectedBlocks.length > 0) {
+                selectedBlocks.forEach(block => {
+                    scene.remove(block.outline);
+                    scene.remove(block);
+                });
+                placedBlocks = placedBlocks.filter(block => !selectedBlocks.includes(block));
+                status.innerText = `已删除 ${selectedBlocks.length} 个选中方块`;
+                selectedBlocks = [];
+            } else {
+                status.innerText = '请先选中一个或多个方块';
+            }
+        }
+
+        // 魔棒工具
+        function activateMagicWand() {
+            magicWandActive = !magicWandActive;
+            status.innerText = magicWandActive ? '魔棒工具已激活，点击方块以选择区域' : '魔棒工具已关闭';
+            if (!magicWandActive) {
+                selectedBlocks.forEach(block => scene.remove(block.outline));
+                selectedBlocks = [];
+            }
+        }
+
+        // 选择相同 ID 且相邻的方块
+        function selectConnectedBlocks(startBlock) {
+            const blockType = startBlock.userData.name; // 使用方块名称作为类型
+            const startPos = startBlock.position;
+            const visited = new Set();
+            const queue = [startPos];
+            selectedBlocks = [];
+
+            const directions = [
+                new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
+                new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0),
+                new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)
+            ];
+
+            while (queue.length > 0) {
+                const currentPos = queue.shift();
+                const posKey = `${currentPos.x},${currentPos.y},${currentPos.z}`;
+                if (visited.has(posKey)) continue;
+                visited.add(posKey);
+
+                const block = placedBlocks.find(b => b.position.equals(currentPos));
+                if (block && block.userData.name === blockType) { // 检查方块名称是否相同
+                    selectedBlocks.push(block);
+                    directions.forEach(dir => {
+                        const neighborPos = currentPos.clone().add(dir);
+                        if (!visited.has(`${neighborPos.x},${neighborPos.y},${neighborPos.z}`)) {
+                            queue.push(neighborPos);
+                        }
+                    });
+                }
+            }
+
+            selectedBlocks.forEach(block => {
+                const outlineGeometry = new THREE.BoxGeometry(1.05, 1.05, 1.05);
+                const outlineMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00, wireframe: true });
+                const outline = new THREE.Mesh(outlineGeometry, outlineMaterial);
+                outline.position.copy(block.position);
+                block.outline = outline;
+                scene.add(outline);
+            });
+        }
+
+        // 解析 VoxelTxt 文件
+        function parseVoxelText(text) {
+            const layers = [];
+            let currentLayer = [];
+            const blockIdsMap = Object.fromEntries(Object.entries(blockIds).map(([id, name]) => [id, name]));
+
+            for (let line of text.split('\n')) {
+                line = line.trim();
+                if (!line || line.startsWith('---')) {
+                    if (currentLayer.length > 0) {
+                        layers.push(currentLayer);
+                        currentLayer = [];
+                    }
+                    continue;
+                }
+                const tokens = line.split(/\s+/).map(token => {
+                    if (token === '.') return null;
+                    if (blockIdsMap[token]) return token;
+                    return null;
+                });
+                currentLayer.push(tokens);
+            }
+            if (currentLayer.length > 0) layers.push(currentLayer);
+
+            const height = layers.length;
+            const length = layers[0] ? layers[0].length : 0;
+            const width = layers[0] && layers[0][0] ? layers[0][0].length : 0;
+
+            return { width, height, length, layers };
+        }
+
+        // 导入 VoxelTxt 文件并调整视角
+        function importVoxelTxt(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                const { width, height, length, layers } = parseVoxelText(text);
+
+                // 清空现有方块
+                placedBlocks.forEach(block => scene.remove(block));
+                placedBlocks = [];
+
+                const textureLoader = new THREE.TextureLoader();
+                const unrecognizedBlocks = new Set();
+
+                for (let y = 0; y < height; y++) {
+                    for (let z = 0; z < length; z++) {
+                        for (let x = 0; x < width; x++) {
+                            const blockId = layers[y][z][x];
+                            if (blockId && blockId !== null) {
+                                const blockName = blockIds[blockId];
+                                if (!blockName) {
+                                    unrecognizedBlocks.add(blockId);
+                                    continue;
+                                }
+                                let block;
+                                if (blockName === 'grass_block') {
+                                    const topTexture = textureLoader.load(textures['grass_block_top'] || textures['grass_block'] || Object.values(textures)[0]);
+                                    const sideTexture = textureLoader.load(textures['grass_block_side'] || textures['grass_block'] || Object.values(textures)[0]);
+                                    const bottomTexture = textureLoader.load(textures['dirt'] || Object.values(textures)[0]);
+                                    block = createGrassBlock(topTexture, sideTexture, bottomTexture);
+                                } else {
+                                    const textureUrl = textures[blockName] || Object.values(textures)[0];
+                                    if (!textureUrl) {
+                                        unrecognizedBlocks.add(blockId);
+                                        continue;
+                                    }
+                                    const texture = textureLoader.load(textureUrl);
+                                    block = createBlock(texture);
+                                }
+                                block.position.set(x, y, z);
+                                block.userData = { name: blockName }; // 添加方块名称
+                                scene.add(block);
+                                placedBlocks.push(block);
+                            }
+                        }
+                    }
+                }
+
+                let statusText = `成功导入 VoxelTxt: ${width}x${height}x${length}`;
+                if (unrecognizedBlocks.size > 0) {
+                    statusText += `，未识别的方块 ID: ${Array.from(unrecognizedBlocks).join(', ')}`;
+                }
+                status.innerText = statusText;
+                lookAtModel();
+            };
+            reader.readAsText(file);
+        // 从服务器加载体素数据
+        function loadFromServer() {
+            fetch('/api/get_voxel_data', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({})
+            })
+            .then(response => response.json())
+            .then(data => {
+                const voxelData = data.data[0];
+                if (voxelData) {
+                    loadVoxelData(voxelData);
+                    status.innerText = '已从服务器加载体素数据';
+                } else {
+                    status.innerText = '服务器暂无体素数据';
+                }
+            })
+            .catch(error => {
+                console.error('加载错误:', error);
+                status.innerText = '从服务器加载失败';
+            });
+        }
+        
+        // 保存体素数据到服务器
+        function saveToServer() {
+            const voxelData = getCurrentVoxelData();
+            fetch('/api/save_voxel_data', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify([voxelData])
+            })
+            .then(response => response.json())
+            .then(data => {
+                status.innerText = data.data[0]; // 显示 "保存成功"
+            })
+            .catch(error => {
+                console.error('保存错误:', error);
+                status.innerText = '保存到服务器失败';
+            });
+        }
+        
+        // 解析体素数据并加载到场景
+        function loadVoxelData(content) {
+            // 清除现有方块
+            placedBlocks.forEach(block => scene.remove(block));
+            placedBlocks = [];
+        
+            const textureLoader = new THREE.TextureLoader();
+            const lines = content.trim().split('\n');
+            lines.forEach(line => {
+                const [x, y, z, name] = line.split(' ');
+                if (x && y && z && name) {
+                    let block;
+                    if (name === 'grass_block') {
+                        const topTexture = textureLoader.load(textures['grass_block_top'] || textures['grass_block'] || Object.values(textures)[0]);
+                        const sideTexture = textureLoader.load(textures['grass_block_side'] || textures['grass_block'] || Object.values(textures)[0]);
+                        const bottomTexture = textureLoader.load(textures['dirt'] || Object.values(textures)[0]);
+                        block = createGrassBlock(topTexture, sideTexture, bottomTexture);
+                    } else {
+                        const textureUrl = textures[name] || Object.values(textures)[0];
+                        const texture = textureLoader.load(textureUrl);
+                        block = createBlock(texture);
+                    }
+                    block.position.set(parseFloat(x), parseFloat(y), parseFloat(z));
+                    block.userData = { name };
+                    scene.add(block);
+                    placedBlocks.push(block);
+                }
+            });
+        }
+        
+        // 生成当前场景的体素数据字符串
+        function getCurrentVoxelData() {
+            return placedBlocks.map(block => {
+                const pos = block.position;
+                const name = block.userData.name;
+                return `${pos.x} ${pos.y} ${pos.z} ${name}`;
+            }).join('\n');
+        }
+        
+        // 处理本地 .txt 文件输入（已有逻辑的补充）
+        document.getElementById('voxelTxtInput').addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const content = e.target.result;
+                    loadVoxelData(content);
+                    status.innerText = `已加载本地体素文件: ${file.name}`;
+                };
+                reader.readAsText(file);
+            }
+        });
+
+        // 自动加载上次材质包
+        window.addEventListener('load', function() {
+            const lastTexturePack = localStorage.getItem('lastTexturePack');
+            if (lastTexturePack) processTexturePack(lastTexturePack);
+            status.innerText = '进入编辑模式（点击添加或选中方块）';
+        });
+
+        // 绑定点击事件
+        canvas.addEventListener('click', selectBlock);
+
+        // 动画循环
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // 窗口调整
+        window.addEventListener('resize', function() {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+        });
+    </script>
+</body>
+</html>
