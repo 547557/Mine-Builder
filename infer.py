@@ -11,15 +11,15 @@ import argparse
 from PIL import Image
 from mmgp import offload
 from Voxelization import load_block_colors, ModelViewer
-from aieditor import analyze_images_and_voxel, client  # Import client directly from aieditor
-from openai import OpenAI  # Still needed for compatibility
+from aieditor import analyze_images_and_voxel
+from openai import OpenAI
 from txt2sc import text_to_schematic
 
 # 常量定义
 BLOCK_COLORS_PATH = 'blockids.json'
 API_KEY_PATH = 'api_key.json'
 SAVE_DIR = 'cache'  # 缓存目录
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__)) if '__file__ in globals() else os.getcwd()
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
 OUTPUT_DIR = os.path.join(CURRENT_DIR, 'output')  # 输出目录
 PROFILE = 5  # 内存优化配置
 VERBOSE = 1  # 详细程度
@@ -70,18 +70,16 @@ def load_api_key():
 def verify_api_key(api_key):
     """验证Gemini API密钥是否有效"""
     try:
-        # 初始化客户端，使用Gemini API的base_url
-        test_client = OpenAI(
+        client = OpenAI(
             api_key=api_key,
             base_url="https://generativelanguage.googleapis.com/v1beta/"
         )
-        # 测试API密钥有效性，使用一个简单的chat请求
-        response = test_client.chat.completions.create(
+        # 简单测试API调用，发送一个简单的消息
+        response = client.chat.completions.create(
             model="gemini-2.0-flash",
-            messages=[{"role": "user", "content": "Test"}],
+            messages=[{"role": "user", "content": [{"type": "text", "text": "Hello"}]}],
             max_tokens=10
         )
-        print("Gemini API密钥验证成功")
         return True
     except Exception as e:
         print(f"Gemini API密钥验证失败: {e}")
@@ -103,10 +101,10 @@ def gen_save_folder(max_size=60):
 def export_mesh(mesh, save_folder, textured=False):
     """导出模型文件"""
     if textured:
-        temp_path = os.path.join(save_folder, 'textured_mesh.glb')
+        temp_path = os.path.join(save_folder, f'textured_mesh.glb')
         output_path = os.path.join(OUTPUT_DIR, f'textured_mesh_{int(time.time())}.glb')
     else:
-        temp_path = os.path.join(save_folder, 'white_mesh.glb')
+        temp_path = os.path.join(save_folder, f'white_mesh.glb')
         output_path = os.path.join(OUTPUT_DIR, f'white_mesh_{int(time.time())}.glb')
     
     # 导出到临时位置
@@ -255,7 +253,7 @@ def process_model(glb_file):
         return None, None
     
     print(f"模型已体素化，PLY文件: {ply_path}, TXT文件: {txt_path}")
-    return ply_path, txt_path
+    return ply_path, txt_file
 
 def analyze_images_and_voxel_with_key(api_key):
     """使用API密钥调用analyze_images_and_voxel函数"""
@@ -263,9 +261,10 @@ def analyze_images_and_voxel_with_key(api_key):
         print("请提供有效的Gemini API密钥！")
         return None
     
-    # 设置aieditor中的全局client的API密钥
+    # 设置OpenAI客户端的API密钥和Gemini API的base_url
+    from aieditor import client
     client.api_key = api_key
-    # client.base_url已在aieditor.py中设置为Gemini API的URL，无需再次设置
+    client.base_url = "https://generativelanguage.googleapis.com/v1beta/"
     
     # 调用分析函数
     try:
