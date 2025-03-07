@@ -41,3 +41,4 @@ rembg
 onnxruntime
 #gevent
 #geventhttpclient
+nbt
