@@ -103,10 +103,10 @@ def gen_save_folder(max_size=60):
 def export_mesh(mesh, save_folder, textured=False):
     """导出模型文件"""
     if textured:
-        temp_path = os.path.join(save_folder, f'textured_mesh.glb')
+        temp_path = os.path.join(save_folder, 'textured_mesh.glb')
         output_path = os.path.join(OUTPUT_DIR, f'textured_mesh_{int(time.time())}.glb')
     else:
-        temp_path = os.path.join(save_folder, f'white_mesh.glb')
+        temp_path = os.path.join(save_folder, 'white_mesh.glb')
         output_path = os.path.join(OUTPUT_DIR, f'white_mesh_{int(time.time())}.glb')
     
     # 导出到临时位置
@@ -255,7 +255,7 @@ def process_model(glb_file):
         return None, None
     
     print(f"模型已体素化，PLY文件: {ply_path}, TXT文件: {txt_path}")
-    return ply_path, txt_file
+    return ply_path, txt_path
 
 def analyze_images_and_voxel_with_key(api_key):
     """使用API密钥调用analyze_images_and_voxel函数"""
