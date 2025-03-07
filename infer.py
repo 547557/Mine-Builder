@@ -11,15 +11,15 @@ import argparse
 from PIL import Image
 from mmgp import offload
 from Voxelization import load_block_colors, ModelViewer
-from aieditor import analyze_images_and_voxel
-from openai import OpenAI
+from aieditor import analyze_images_and_voxel, client  # Import client directly from aieditor
+from openai import OpenAI  # Still needed for compatibility
 from txt2sc import text_to_schematic
 
 # 常量定义
 BLOCK_COLORS_PATH = 'blockids.json'
 API_KEY_PATH = 'api_key.json'
 SAVE_DIR = 'cache'  # 缓存目录
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__)) if '__file__ in globals() else os.getcwd()
 OUTPUT_DIR = os.path.join(CURRENT_DIR, 'output')  # 输出目录
 PROFILE = 5  # 内存优化配置
 VERBOSE = 1  # 详细程度
@@ -68,14 +68,23 @@ def load_api_key():
     return ''
 
 def verify_api_key(api_key):
-    """验证API密钥是否有效"""
+    """验证Gemini API密钥是否有效"""
     try:
-        client = OpenAI(api_key=api_key)
-        # 简单测试API调用
-        response = client.models.list()
+        # 初始化客户端，使用Gemini API的base_url
+        test_client = OpenAI(
+            api_key=api_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/"
+        )
+        # 测试API密钥有效性，使用一个简单的chat请求
+        response = test_client.chat.completions.create(
+            model="gemini-2.0-flash",
+            messages=[{"role": "user", "content": "Test"}],
+            max_tokens=10
+        )
+        print("Gemini API密钥验证成功")
         return True
     except Exception as e:
-        print(f"API密钥验证失败: {e}")
+        print(f"Gemini API密钥验证失败: {e}")
         return False
 
 def gen_save_folder(max_size=60):
@@ -246,17 +255,17 @@ def process_model(glb_file):
         return None, None
     
     print(f"模型已体素化，PLY文件: {ply_path}, TXT文件: {txt_path}")
-    return ply_path, txt_path
+    return ply_path, txt_file
 
 def analyze_images_and_voxel_with_key(api_key):
     """使用API密钥调用analyze_images_and_voxel函数"""
     if not api_key or not api_key.strip():
-        print("请提供有效的API密钥！")
+        print("请提供有效的Gemini API密钥！")
         return None
     
-    # 设置OpenAI客户端的API密钥
-    from aieditor import client
+    # 设置aieditor中的全局client的API密钥
     client.api_key = api_key
+    # client.base_url已在aieditor.py中设置为Gemini API的URL，无需再次设置
     
     # 调用分析函数
     try:
@@ -315,14 +324,14 @@ def main(args):
     api_valid = False
     while not api_valid:
         if not api_key:
-            print("错误：未提供API密钥，且本地未找到有效密钥")
+            print("错误：未提供Gemini API密钥，且本地未找到有效密钥")
             return
         
         if verify_api_key(api_key):
             api_valid = True
             save_api_key(api_key)
         else:
-            print("错误：API密钥无效")
+            print("错误：Gemini API密钥无效")
             return
     
     # 加载Hunyuan模型
@@ -382,7 +391,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Minecraft 3D模型生成工具")
     parser.add_argument("-prompt", type=str, required=True, help="生成3D模型的提示词")
     parser.add_argument("-seed", type=str, default="", help="随机种子（可选，留空则随机生成）")
-    parser.add_argument("-key", type=str, default="", help="OpenAI API密钥（可选，若未提供则尝试加载本地密钥）")
+    parser.add_argument("-key", type=str, default="", help="Gemini API密钥（可选，若未提供则尝试加载本地密钥）")
     
     # 解析参数并运行主函数
     args = parser.parse_args()
