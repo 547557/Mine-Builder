@@ -253,7 +253,7 @@ def process_model(glb_file):
         return None, None
     
     print(f"模型已体素化，PLY文件: {ply_path}, TXT文件: {txt_path}")
-    return ply_path, txt_file
+    return ply_path, txt_path  # 修复：返回 txt_path 而不是 txt_file
 
 def analyze_images_and_voxel_with_key(api_key):
     """使用API密钥调用analyze_images_and_voxel函数"""
@@ -303,6 +303,14 @@ def convert_to_schematic(working_file):
         print(f"转换失败：{str(e)}")
         return None
 
+def check_existing_models():
+    """检查output文件夹中是否已有.glb模型文件"""
+    glb_files = glob.glob(os.path.join(OUTPUT_DIR, "*.glb"))
+    if glb_files:
+        print(f"发现现有模型文件：{glb_files[0]}，跳过Hunyuan模型生成")
+        return glb_files[0]  # 返回第一个找到的.glb文件
+    return None
+
 def main(args):
     """主函数"""
     print("==========================================")
@@ -333,25 +341,29 @@ def main(args):
             print("错误：Gemini API密钥无效")
             return
     
-    # 加载Hunyuan模型
-    t2i_worker, i23d_worker, texgen_worker, rmbg_worker, FloaterRemover, DegenerateFaceRemover, FaceReducer = setup_hunyuan_model()
-    
-    # 生成3D模型
-    glb_file = generate_3d_model(
-        prompt, 
-        seed, 
-        t2i_worker, 
-        i23d_worker, 
-        texgen_worker, 
-        rmbg_worker, 
-        FloaterRemover, 
-        DegenerateFaceRemover, 
-        FaceReducer
-    )
+    # 检查是否有现有模型
+    glb_file = check_existing_models()
     
     if not glb_file:
-        print("3D模型生成失败")
-        return
+        # 如果没有现有模型，加载Hunyuan模型并生成
+        t2i_worker, i23d_worker, texgen_worker, rmbg_worker, FloaterRemover, DegenerateFaceRemover, FaceReducer = setup_hunyuan_model()
+        
+        # 生成3D模型
+        glb_file = generate_3d_model(
+            prompt, 
+            seed, 
+            t2i_worker, 
+            i23d_worker, 
+            texgen_worker, 
+            rmbg_worker, 
+            FloaterRemover, 
+            DegenerateFaceRemover, 
+            FaceReducer
+        )
+        
+        if not glb_file:
+            print("3D模型生成失败")
+            return
     
     # 体素化处理
     print("开始体素化处理...")
