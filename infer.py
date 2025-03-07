@@ -28,7 +28,7 @@ VERBOSE = 1  # Verbosity level
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-# Load blockids.json globally
+# Global loading of blockids.json
 block_colors = load_block_colors(BLOCK_COLORS_PATH)
 viewer = ModelViewer(block_colors)
 
@@ -44,7 +44,7 @@ def cleanup_image_files():
             except Exception as e:
                 print(f"Error deleting file {filename}: {e}")
 
-# Register cleanup function to run at program exit
+# Register cleanup function on exit
 atexit.register(cleanup_image_files)
 
 def save_api_key(api_key):
@@ -273,14 +273,20 @@ def convert_to_schematic(working_file):
         print(f"Conversion failed: {str(e)}")
         return None
 
-def main(args):
-    """Main function with command-line arguments"""
+def main():
+    """Main function"""
+    parser = argparse.ArgumentParser(description="Minecraft 3D Model Generation Tool")
+    parser.add_argument("-prompt", type=str, required=True, help="Prompt for generating the 3D model")
+    parser.add_argument("-seed", type=str, default="", help="Random seed (optional, defaults to random)")
+    parser.add_argument("-key", type=str, default="", help="OpenAI API key (optional, will load from file if not provided)")
+    args = parser.parse_args()
+
     print("==========================================")
     print("Minecraft 3D Model Generation Tool")
     print("==========================================")
     
-    # Load API key
-    api_key = load_api_key()
+    # Load or set API key
+    api_key = args.key if args.key else load_api_key()
     api_valid = False
     
     while not api_valid:
@@ -291,24 +297,16 @@ def main(args):
             api_valid = True
             save_api_key(api_key)
         else:
-            print("API key is invalid, please re-enter")
+            print("Invalid API key, please try again")
             api_key = ""
     
     # Load Hunyuan model
     t2i_worker, i23d_worker, texgen_worker, rmbg_worker, FloaterRemover, DegenerateFaceRemover, FaceReducer = setup_hunyuan_model()
     
-    # Get prompt and seed from command-line arguments
-    prompt = args.prompt
-    seed = args.seed
-    
-    if not prompt.strip():
-        print("Prompt cannot be empty")
-        return
-    
     # Generate 3D model
     glb_file = generate_3d_model(
-        prompt, 
-        seed, 
+        args.prompt, 
+        args.seed, 
         t2i_worker, 
         i23d_worker, 
         texgen_worker, 
@@ -354,9 +352,4 @@ def main(args):
     cleanup_image_files()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate a Minecraft 3D model from a prompt.")
-    parser.add_argument("-prompt", type=str, required=True, help="Prompt for generating the 3D model (e.g., 'a house')")
-    parser.add_argument("-seed", type=str, default="", help="Random seed for generation (optional, default is random)")
-    
-    args = parser.parse_args()
-    main(args)
+    main()
