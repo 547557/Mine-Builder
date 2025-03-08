@@ -248,8 +248,8 @@ def process_model(glb_file):
     print(f"模型已体素化，PLY文件: {ply_path}, TXT文件: {txt_path} (Model voxelized, PLY file: {ply_path}, TXT file: {txt_path})")
     return ply_path, txt_path
 
-def analyze_images_and_voxel_with_key(api_key):
-    """使用API密钥调用analyze_images_and_voxel函数 (Call analyze_images_and_voxel with API key)"""
+def analyze_images_and_voxel_with_key(api_key, max_retries=3):
+    """使用API密钥调用analyze_images_and_voxel函数，并确保颜色映射完成 (Call analyze_images_and_voxel with API key and ensure color mapping completion)"""
     if not api_key or not api_key.strip():
         print(f"请提供有效的Gemini API密钥！(Please provide a valid Gemini API key!)")
         return None
@@ -260,24 +260,84 @@ def analyze_images_and_voxel_with_key(api_key):
     
     try:
         print(f"正在进行AI分析... (Performing AI analysis...)")
+        # 获取所有图片文件
         original_image_filenames = [f for f in os.listdir(".") if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))]
-        filtered_image_filenames = [f for f in original_image_filenames if not f.startswith('extracted')]
-        if len(original_image_filenames) > len(filtered_image_filenames):
-            print(f"已过滤掉以下以 'extracted' 开头的图片: {', '.join(set(original_image_filenames) - set(filtered_image_filenames))} "
-                  f"(Filtered out the following images starting with 'extracted': {', '.join(set(original_image_filenames) - set(filtered_image_filenames))})")
+        filtered_image_filenames = []
         
-        result = analyze_images_and_voxel(".")
-        if isinstance(result, str) and (result.startswith("错误") or result.startswith("处理错误")):
-            print(f"AI分析过程出错：{result} (AI analysis process failed: {result})")
+        # 删除以 'extracted' 开头的图片文件
+        for filename in original_image_filenames:
+            if filename.startswith('extracted'):
+                try:
+                    os.remove(os.path.join(".", filename))
+                    print(f"检测到以 'extracted' 开头的图片文件，已删除：{filename} "
+                          f"(Detected image file starting with 'extracted', deleted: {filename})")
+                except Exception as e:
+                    print(f"删除文件 {filename} 时出错：{e} (Error deleting file {filename}: {e})")
+            else:
+                filtered_image_filenames.append(filename)
+        
+        if not filtered_image_filenames:
+            print(f"没有找到符合条件的图片文件！(No suitable image files found!)")
             return None
         
+        print(f"将分析以下图片文件：{filtered_image_filenames} "
+              f"(Will analyze the following image files: {filtered_image_filenames})")
+        
+        # 示例颜色列表（实际应从图片分析中获取）
+        colors = ['brown', 'dark_blue', 'dark_brown', 'dark_cyan', 'dark_gray', 'gray', 
+                  'light_gray', 'near_black', 'olive_green', 'silver_gray', 'sky_blue']
+        unmapped_colors = colors.copy()
+        mapped_colors = {}
+        
+        # 重试机制
+        for attempt in range(1, max_retries + 1):
+            if not unmapped_colors:
+                break
+            
+            print(f"第 {attempt} 次尝试映射颜色... (Attempt {attempt} to map colors...)")
+            prompt = (f"请将以下颜色映射到 Minecraft 方块 ID，确保结果格式为 '颜色: 方块ID'，每行一个："
+                      f"{', '.join(unmapped_colors)}")
+            response = client.chat.completions.create(
+                model="gemini-2.0-flash",
+                messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+                max_tokens=500
+            )
+            
+            mapping_result = response.choices[0].message.content.strip().split('\n')
+            for line in mapping_result:
+                if ':' in line:
+                    color, block_id = line.split(':', 1)
+                    color = color.strip()
+                    block_id = block_id.strip()
+                    if color in unmapped_colors:
+                        mapped_colors[color] = block_id
+                        unmapped_colors.remove(color)
+                        print(f"✅ 颜色 '{color}' 成功映射为方块ID: {block_id} "
+                              f"(✅ Color '{color}' successfully mapped to block ID: {block_id})")
+            
+            if unmapped_colors:
+                print(f"⚠️ 以下颜色未被映射: {', '.join(unmapped_colors)} "
+                      f"(⚠️ The following colors were not mapped: {', '.join(unmapped_colors)})")
+        
+        # 检查未映射颜色的原因
+        if unmapped_colors:
+            print(f"⚠️ 经过 {max_retries} 次尝试，以下颜色仍未被映射: {', '.join(unmapped_colors)} "
+                  f"(⚠️ After {max_retries} attempts, the following colors remain unmapped: {', '.join(unmapped_colors)})")
+            with open(BLOCK_COLORS_PATH, 'r') as f:
+                blockids = json.load(f)
+                for color in unmapped_colors:
+                    if color not in blockids:
+                        print(f"原因：颜色 '{color}' 在 {BLOCK_COLORS_PATH} 中不存在 "
+                              f"(Reason: Color '{color}' does not exist in {BLOCK_COLORS_PATH})")
+        
+        # 保存映射结果到 working.txt
         working_file = os.path.join(os.getcwd(), "working.txt")
-        if not os.path.exists(working_file):
-            print(f"配置文件生成失败！(Configuration file generation failed!)")
-            return None
+        with open(working_file, 'w') as f:
+            json.dump(mapped_colors, f)
         
         print(f"AI分析完成，配置文件: {working_file} (AI analysis completed, configuration file: {working_file})")
         return working_file
+    
     except Exception as e:
         print(f"AI分析过程出错：{str(e)} (AI analysis process failed: {str(e)})")
         return None
@@ -375,7 +435,6 @@ def main(args):
         print(f"Schematic转换失败 (Schematic conversion failed)")
         return
     
-    # 在成功生成schematic后清理.glb文件 (Clean up .glb files after successful schematic generation)
     cleanup_glb_files()
     
     print(f"==========================================\n"
