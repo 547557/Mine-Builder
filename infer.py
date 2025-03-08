@@ -3,6 +3,11 @@ import os
 import json
 import atexit
 import shutil
+#!/usr/bin/env python3
+import os
+import json
+import atexit
+import shutil
 import time
 import glob
 import torch
@@ -260,11 +265,13 @@ def analyze_images_and_voxel_with_key(api_key):
     
     try:
         print(f"正在进行AI分析... (Performing AI analysis...)")
+        # 获取所有图片文件并过滤掉以 'extracted' 开头的文件
         original_image_filenames = [f for f in os.listdir(".") if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))]
         filtered_image_filenames = [f for f in original_image_filenames if not f.startswith('extracted')]
         if len(original_image_filenames) > len(filtered_image_filenames):
-            print(f"已过滤掉以下以 'extracted' 开头的图片: {', '.join(set(original_image_filenames) - set(filtered_image_filenames))} "
-                  f"(Filtered out the following images starting with 'extracted': {', '.join(set(original_image_filenames) - set(filtered_image_filenames))})")
+            filtered_files = set(original_image_filenames) - set(filtered_image_filenames)
+            print(f"已过滤掉以下以 'extracted' 开头的图片: {', '.join(filtered_files)} "
+                  f"(Filtered out the following images starting with 'extracted': {', '.join(filtered_files)})")
         
         result = analyze_images_and_voxel(".")
         if isinstance(result, str) and (result.startswith("错误") or result.startswith("处理错误")):
