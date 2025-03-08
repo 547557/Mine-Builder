@@ -36,7 +36,6 @@ def cleanup_image_files():
     """清理当前目录下的临时图片文件 (Clean up temporary image files in the current directory)"""
     image_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.bmp')
     for filename in os.listdir(CURRENT_DIR):
-        # 不再保留以 input_ 开头的文件 (No longer preserve files starting with input_)
         if filename.lower().endswith(image_extensions):
             try:
                 file_path = os.path.join(CURRENT_DIR, filename)
@@ -44,6 +43,16 @@ def cleanup_image_files():
                 print(f"已删除临时图片文件：{filename} (Temporary image file deleted: {filename})")
             except Exception as e:
                 print(f"删除文件 {filename} 时出错：{e} (Error deleting file {filename}: {e})")
+
+def cleanup_glb_files():
+    """清理output目录下的.glb模型文件 (Clean up .glb model files in the output directory)"""
+    glb_files = glob.glob(os.path.join(OUTPUT_DIR, "*.glb"))
+    for glb_file in glb_files:
+        try:
+            os.remove(glb_file)
+            print(f"已删除GLB模型文件：{glb_file} (GLB model file deleted: {glb_file})")
+        except Exception as e:
+            print(f"删除GLB文件 {glb_file} 时出错：{e} (Error deleting GLB file {glb_file}: {e})")
 
 # 注册程序退出时的清理函数 (Register cleanup function on program exit)
 atexit.register(cleanup_image_files)
@@ -251,7 +260,6 @@ def analyze_images_and_voxel_with_key(api_key):
     
     try:
         print(f"正在进行AI分析... (Performing AI analysis...)")
-        # 过滤掉以 extracted 开头的图片文件 (Filter out images starting with 'extracted')
         original_image_filenames = [f for f in os.listdir(".") if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))]
         filtered_image_filenames = [f for f in original_image_filenames if not f.startswith('extracted')]
         if len(original_image_filenames) > len(filtered_image_filenames):
@@ -366,6 +374,9 @@ def main(args):
     if not schematic_file:
         print(f"Schematic转换失败 (Schematic conversion failed)")
         return
+    
+    # 在成功生成schematic后清理.glb文件 (Clean up .glb files after successful schematic generation)
+    cleanup_glb_files()
     
     print(f"==========================================\n"
           f"处理完成！(Processing completed!)\n"
