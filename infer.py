@@ -3,11 +3,6 @@ import os
 import json
 import atexit
 import shutil
-#!/usr/bin/env python3
-import os
-import json
-import atexit
-import shutil
 import time
 import glob
 import torch
@@ -265,13 +260,30 @@ def analyze_images_and_voxel_with_key(api_key):
     
     try:
         print(f"正在进行AI分析... (Performing AI analysis...)")
-        # 获取所有图片文件并过滤掉以 'extracted' 开头的文件
+        # 获取所有图片文件
         original_image_filenames = [f for f in os.listdir(".") if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))]
-        filtered_image_filenames = [f for f in original_image_filenames if not f.startswith('extracted')]
-        if len(original_image_filenames) > len(filtered_image_filenames):
-            filtered_files = set(original_image_filenames) - set(filtered_image_filenames)
-            print(f"已过滤掉以下以 'extracted' 开头的图片: {', '.join(filtered_files)} "
-                  f"(Filtered out the following images starting with 'extracted': {', '.join(filtered_files)})")
+        # 用于存储过滤后的图片文件列表
+        filtered_image_filenames = []
+        
+        # 检查并删除以 'extracted' 开头的图片文件
+        for filename in original_image_filenames:
+            if filename.startswith('extracted'):
+                try:
+                    os.remove(os.path.join(".", filename))
+                    print(f"检测到以 'extracted' 开头的图片文件，已删除：{filename} "
+                          f"(Detected image file starting with 'extracted', deleted: {filename})")
+                except Exception as e:
+                    print(f"删除文件 {filename} 时出错：{e} (Error deleting file {filename}: {e})")
+            else:
+                filtered_image_filenames.append(filename)
+        
+        # 如果没有可用的图片文件
+        if not filtered_image_filenames:
+            print(f"没有找到符合条件的图片文件！(No suitable image files found!)")
+            return None
+        
+        print(f"将分析以下图片文件：{filtered_image_filenames} "
+              f"(Will analyze the following image files: {filtered_image_filenames})")
         
         result = analyze_images_and_voxel(".")
         if isinstance(result, str) and (result.startswith("错误") or result.startswith("处理错误")):
